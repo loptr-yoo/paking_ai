@@ -1,0 +1,5 @@
+{
+  "name": "Copy of Semantic Parking Visualizer",
+  "description": "A semantic visualization tool for underground parking layouts. Features automated spatial constraint checking, element classification (roads, ramps, spots), and AI-powered layout generation.",
+  "requestFramePermissions": []
+}
