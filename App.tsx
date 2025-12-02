@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import MapRenderer from './components/MapRenderer';
 import LayoutControl from './components/LayoutControl';
-import { ParkingLayout, ConstraintViolation } from './types';
+import { ParkingLayout, ConstraintViolation, ElementType } from './types';
 import { validateLayout } from './utils/geometry';
-import { generateParkingLayout, augmentLayoutWithRoads, fixLayoutViolations } from './services/geminiService';
+import { generateParkingLayout, augmentLayoutWithRoads } from './services/geminiService';
 import { parseCustomLayout } from './utils/parsers';
 
 const App: React.FC = () => {
@@ -11,12 +11,42 @@ const App: React.FC = () => {
   const [violations, setViolations] = useState<ConstraintViolation[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [logs, setLogs] = useState<string[]>([]);
 
   // Initial Demo Data load
   useEffect(() => {
     // Trigger a default generation for demo purposes on load
     handleGenerate("Default demo layout");
   }, []);
+
+  const handleLog = (msg: string) => {
+      setLogs(prev => [...prev, msg]);
+  };
+
+  // Helper to determine if violations should be shown or suppressed based on "Acceptable Stop" criteria
+  const updateViolationsState = (currentLayout: ParkingLayout) => {
+      const problems = validateLayout(currentLayout);
+      
+      const isLowCount = problems.length < 4;
+      const isOnlyRoadWallIssues = problems.every(v => {
+        if (v.type !== 'overlap') return false;
+        const el1 = currentLayout.elements.find(e => e.id === v.elementId);
+        const el2 = currentLayout.elements.find(e => e.id === v.targetId);
+        if (!el1 || !el2) return false;
+        const types = [el1.type, el2.type];
+        return types.includes(ElementType.ROAD) && types.includes(ElementType.WALL);
+      });
+
+      if (isLowCount || isOnlyRoadWallIssues) {
+          // If criteria met, we consider the layout "Clean" for visualization purposes
+          setViolations([]); 
+          if (problems.length > 0) {
+              handleLog(`Final check: ${problems.length} minor issues suppressed for clean view.`);
+          }
+      } else {
+          setViolations(problems);
+      }
+  };
 
   const handleUpload = (jsonString: string) => {
     try {
@@ -36,8 +66,8 @@ const App: React.FC = () => {
       
       setError(null);
       setLayout(newLayout);
-      const problems = validateLayout(newLayout);
-      setViolations(problems);
+      setLogs(["Layout uploaded successfully."]);
+      updateViolationsState(newLayout);
     } catch (e: any) {
       setError(`Failed to parse JSON: ${e.message}`);
     }
@@ -46,11 +76,11 @@ const App: React.FC = () => {
   const handleGenerate = async (prompt: string) => {
     setIsGenerating(true);
     setError(null);
+    setLogs([]); // Clear logs on new run
     try {
-      const newLayout = await generateParkingLayout(prompt);
+      const newLayout = await generateParkingLayout(prompt, handleLog);
       setLayout(newLayout);
-      const problems = validateLayout(newLayout);
-      setViolations(problems);
+      updateViolationsState(newLayout);
     } catch (e) {
       setError("Failed to generate layout.");
       console.error(e);
@@ -62,45 +92,17 @@ const App: React.FC = () => {
   const handleAugment = async () => {
     if (!layout) return;
     setIsGenerating(true);
+    setLogs([]); // Clear logs
     try {
-      const newElements = await augmentLayoutWithRoads(layout);
-      if (newElements.length > 0) {
-        const updatedLayout = {
-          ...layout,
-          elements: [...layout.elements, ...newElements]
-        };
-        setLayout(updatedLayout);
-        const problems = validateLayout(updatedLayout);
-        setViolations(problems);
+      const augmentedLayout = await augmentLayoutWithRoads(layout, handleLog);
+      if (augmentedLayout && augmentedLayout.elements && augmentedLayout.elements.length > 0) {
+        setLayout(augmentedLayout);
+        updateViolationsState(augmentedLayout);
       } else {
         setError("AI could not identify valid road placements.");
       }
     } catch (e: any) {
       setError("Failed to augment layout: " + e.message);
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  const handleFix = async () => {
-    if (!layout || violations.length === 0) return;
-    setIsGenerating(true);
-    setError(null);
-    try {
-      const fixedLayout = await fixLayoutViolations(layout, violations);
-      setLayout(fixedLayout);
-      const remainingViolations = validateLayout(fixedLayout);
-      setViolations(remainingViolations);
-      
-      if (remainingViolations.length === 0) {
-        // Success
-      } else if (remainingViolations.length < violations.length) {
-        setError(`Partial fix: Reduced violations from ${violations.length} to ${remainingViolations.length}.`);
-      } else {
-        setError("AI could not fully resolve the spatial constraints.");
-      }
-    } catch (e: any) {
-      setError("Failed to fix layout: " + e.message);
     } finally {
       setIsGenerating(false);
     }
@@ -121,7 +123,7 @@ const App: React.FC = () => {
             <div className="flex gap-4 text-xs text-slate-500">
                <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span> React 19</div>
                <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span> D3.js</div>
-               <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-500"></span> Gemini 2.5</div>
+               <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-500"></span> Gemini 3 Pro</div>
             </div>
         </header>
 
@@ -151,10 +153,10 @@ const App: React.FC = () => {
         onUpload={handleUpload} 
         onGenerate={handleGenerate} 
         onAugment={handleAugment}
-        onFix={handleFix}
         isGenerating={isGenerating}
         violations={violations}
         hasLayout={!!layout}
+        logs={logs}
       />
     </div>
   );

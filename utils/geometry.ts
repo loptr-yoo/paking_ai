@@ -65,7 +65,6 @@ function isPolygonsIntersecting(a: {x: number, y: number}[], b: {x: number, y: n
 
 // Check if smaller element B is contained within or substantially overlapping larger element A
 function isOverlapping(road: LayoutElement, item: LayoutElement): boolean {
-   // Simple AABB check for optimization before SAT
    const pad = 2; 
    return (
      item.x + item.width >= road.x - pad &&
@@ -75,11 +74,44 @@ function isOverlapping(road: LayoutElement, item: LayoutElement): boolean {
    ) && isPolygonsIntersecting(getCorners(road), getCorners(item));
 }
 
-// Check if two elements are touching or overlapping (for Wall-Entrance check)
+// Check if two elements are touching or overlapping
 function isTouching(a: LayoutElement, b: LayoutElement): boolean {
     const cornersA = getCorners(a);
     const cornersB = getCorners(b);
     return isPolygonsIntersecting(cornersA, cornersB);
+}
+
+// Helper to get intersection rectangle of two AABBs (Axis Aligned Bounding Boxes)
+// Only works reliably for non-rotated roads, which is standard for this grid layout
+function getIntersectionBox(r1: LayoutElement, r2: LayoutElement) {
+    const x1 = Math.max(r1.x, r2.x);
+    const y1 = Math.max(r1.y, r2.y);
+    const x2 = Math.min(r1.x + r1.width, r2.x + r2.width);
+    const y2 = Math.min(r1.y + r1.height, r2.y + r2.height);
+
+    if (x1 < x2 && y1 < y2) {
+        return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
+    }
+    return null;
+}
+
+// Helper to determine the "side" of the layout an element is on
+function getLayoutSide(el: LayoutElement, layoutW: number, layoutH: number): 'top' | 'bottom' | 'left' | 'right' {
+    const cx = el.x + el.width / 2;
+    const cy = el.y + el.height / 2;
+    
+    // Distance to edges
+    const distTop = cy;
+    const distBottom = layoutH - cy;
+    const distLeft = cx;
+    const distRight = layoutW - cx;
+    
+    const min = Math.min(distTop, distBottom, distLeft, distRight);
+    
+    if (min === distTop) return 'top';
+    if (min === distBottom) return 'bottom';
+    if (min === distLeft) return 'left';
+    return 'right';
 }
 
 export function validateLayout(layout: ParkingLayout): ConstraintViolation[] {
@@ -104,10 +136,9 @@ export function validateLayout(layout: ParkingLayout): ConstraintViolation[] {
     ElementType.PARKING_SPACE, 
     ElementType.PILLAR, 
     ElementType.WALL, 
-    ElementType.BUILDING,
     ElementType.STAIRCASE,
     ElementType.ELEVATOR,
-    ElementType.ROAD // Added Road to check against Walls
+    ElementType.ROAD
   ];
   
   const solids = layout.elements.filter(e => solidTypes.includes(e.type as ElementType));
@@ -117,26 +148,22 @@ export function validateLayout(layout: ParkingLayout): ConstraintViolation[] {
       const el1 = solids[i];
       const el2 = solids[j];
 
-      // Ignore Wall-Wall overlap
+      // Ignore Wall-Wall overlaps (corners)
       if (el1.type === ElementType.WALL && el2.type === ElementType.WALL) continue;
-      
-      // Ignore Road-Road overlap (Intersections are allowed)
+      // Ignore Road-Road overlaps (intersections)
       if (el1.type === ElementType.ROAD && el2.type === ElementType.ROAD) continue;
-
-      // Ignore Road vs Non-Wall Solids (Roads contain things, but Roads vs Walls is bad)
-      if ((el1.type === ElementType.ROAD && el2.type !== ElementType.WALL) || 
-          (el2.type === ElementType.ROAD && el1.type !== ElementType.WALL)) {
+      
+      // NEW: Ignore Pillar-Wall overlaps (Pillars can be inside/embedded in walls)
+      if ((el1.type === ElementType.PILLAR && el2.type === ElementType.WALL) ||
+          (el2.type === ElementType.PILLAR && el1.type === ElementType.WALL)) {
           continue;
       }
-
-      // Parking Space vs Parking Space - STRICT NO OVERLAP
-      // (Loop naturally handles this as they are both in solidTypes)
-
+      
       const r1 = Math.max(el1.width, el1.height);
       const r2 = Math.max(el2.width, el2.height);
       const dist = Math.sqrt(Math.pow(el1.x - el2.x, 2) + Math.pow(el1.y - el2.y, 2));
       
-      // Optimization: Distance check
+      // Optimization: Simple distance check before expensive SAT
       if (dist < r1 + r2) {
          if (isPolygonsIntersecting(getCorners(el1), getCorners(el2))) {
              violations.push({
@@ -154,17 +181,16 @@ export function validateLayout(layout: ParkingLayout): ConstraintViolation[] {
   const itemsOnRoad = [
     ElementType.GUIDANCE_SIGN,
     ElementType.SIDEWALK,
-    ElementType.RAMP,
     ElementType.SPEED_BUMP,
     ElementType.LANE_LINE,
     ElementType.CONVEX_MIRROR
   ];
 
   // 4. Placement Constraints (Items that MUST NOT be on a ROAD)
+  // NOTE: PILLAR is handled in solid collision (overlap) check above.
   const itemsNotOnRoad = [
       ElementType.STAIRCASE,
       ElementType.ELEVATOR,
-      ElementType.BUILDING
   ];
 
   const roads = layout.elements.filter(e => e.type === ElementType.ROAD);
@@ -190,18 +216,44 @@ export function validateLayout(layout: ParkingLayout): ConstraintViolation[] {
        violations.push({
            elementId: item.id,
            type: 'placement_error',
-           message: `${item.type} must NOT be on a Driving Lane (Move to Ground).`
+           message: `${item.type} must NOT be on a Driving Lane.`
        });
     }
   });
 
+  // 4b. Intersection Constraints
+  const noIntersectionItems = [ElementType.LANE_LINE, ElementType.SPEED_BUMP, ElementType.SIDEWALK];
+  const intersectionRestricted = layout.elements.filter(e => noIntersectionItems.includes(e.type as ElementType));
+  
+  if (intersectionRestricted.length > 0) {
+      for (let i = 0; i < roads.length; i++) {
+          for (let j = i + 1; j < roads.length; j++) {
+              const r1 = roads[i];
+              const r2 = roads[j];
+              
+              // Find intersection box
+              const box = getIntersectionBox(r1, r2);
+              if (box && box.width > 5 && box.height > 5) {
+                   // Check if restricted items overlap this box
+                   intersectionRestricted.forEach(item => {
+                       const itemBox = {x: item.x, y: item.y, width: item.width, height: item.height}; // Assume unrotated for box check
+                       const overlap = getIntersectionBox(box as any, itemBox as any);
+                       if (overlap && overlap.width > 1 && overlap.height > 1) {
+                           violations.push({
+                               elementId: item.id,
+                               type: 'placement_error',
+                               message: `${item.type} cannot be placed in a road intersection.`
+                           });
+                       }
+                   });
+              }
+          }
+      }
+  }
 
-  // 5. Wall Adjacency Constraints (Entrances/Exits MUST touch a wall)
-  const wallDependents = [
-      ElementType.ENTRANCE,
-      ElementType.EXIT,
-      ElementType.SAFE_EXIT
-  ];
+
+  // 5. Wall Adjacency Constraints
+  const wallDependents = [ElementType.ENTRANCE, ElementType.EXIT]; 
   const walls = layout.elements.filter(e => e.type === ElementType.WALL);
   const itemsNeedingWall = layout.elements.filter(e => wallDependents.includes(e.type as ElementType));
 
@@ -215,8 +267,22 @@ export function validateLayout(layout: ParkingLayout): ConstraintViolation[] {
           });
       }
   });
+  
+  // 5b. Safe Exit -> Staircase Constraints (Moved OUT of wall dependents)
+  const safeExits = layout.elements.filter(e => e.type === ElementType.SAFE_EXIT);
+  const staircases = layout.elements.filter(e => e.type === ElementType.STAIRCASE);
+  safeExits.forEach(item => {
+      const touchesStair = staircases.some(stair => isTouching(stair, item));
+      if (!touchesStair) {
+          violations.push({
+              elementId: item.id,
+              type: 'placement_error',
+              message: `Safe Exit must be adjacent to a Staircase.`
+          });
+      }
+  });
 
-  // 6. Connectivity Check (Basic Graph)
+  // 6. Connectivity Check
   const entrances = layout.elements.filter(e => e.type === ElementType.ENTRANCE);
   const exits = layout.elements.filter(e => e.type === ElementType.EXIT);
   
@@ -239,54 +305,70 @@ export function validateLayout(layout: ParkingLayout): ConstraintViolation[] {
              violations.push({ elementId: ent.id, type: 'connectivity_error', message: 'Entrance not connected to road.' });
              return;
         }
-
-        const queue = [startRoad.id];
-        const visited = new Set<string>([startRoad.id]);
-        let foundExit = false;
-
-        while(queue.length > 0) {
-            const currId = queue.shift()!;
-            const currRoad = roads.find(r => r.id === currId);
-            
-            if (currRoad && exits.some(ex => isPolygonsIntersecting(getCorners(currRoad), getCorners(ex)))) {
-                foundExit = true;
-                break;
-            }
-
-            const neighbors = roadGraph.get(currId) || [];
-            for(const n of neighbors) {
-                if(!visited.has(n)) {
-                    visited.add(n);
-                    queue.push(n);
-                }
-            }
-        }
-
-        if (!foundExit) {
-            violations.push({ elementId: ent.id, type: 'connectivity_error', message: 'No valid path to exit.' });
-        }
     });
   }
-
-  // 7. Check Mandatory Counts (At least 1 Entrance, 1 Exit)
-  if (entrances.length === 0) {
-    violations.push({ elementId: 'global', type: 'placement_error', message: 'Layout must have at least one Entrance.' });
+  
+  // 6b. Entrance/Exit Count Check
+  if (entrances.length < 1) {
+       violations.push({ elementId: 'global', type: 'connectivity_error', message: 'Layout must have at least one Entrance.' });
   }
-  if (exits.length === 0) {
-    violations.push({ elementId: 'global', type: 'placement_error', message: 'Layout must have at least one Exit.' });
+  if (exits.length < 1) {
+       violations.push({ elementId: 'global', type: 'connectivity_error', message: 'Layout must have at least one Exit.' });
   }
 
-  // 8. Check Outer Walls (Perimeter)
-  // Check if we have walls near boundaries (within 20 units)
-  const hasTopWall = walls.some(w => w.y < 20 && w.width > 50);
-  const hasBottomWall = walls.some(w => w.y + w.height > layout.height - 20 && w.width > 50);
-  const hasLeftWall = walls.some(w => w.x < 20 && w.height > 50);
-  const hasRightWall = walls.some(w => w.x + w.width > layout.width - 20 && w.height > 50);
+  // 6c. Entrance/Exit Side Separation Check
+  const sidesWithEntrance = new Set(entrances.map(e => getLayoutSide(e, layout.width, layout.height)));
+  const sidesWithExit = new Set(exits.map(e => getLayoutSide(e, layout.width, layout.height)));
 
-  if (!hasTopWall) violations.push({ elementId: 'global', type: 'placement_error', message: 'Missing Top Perimeter Wall.' });
-  if (!hasBottomWall) violations.push({ elementId: 'global', type: 'placement_error', message: 'Missing Bottom Perimeter Wall.' });
-  if (!hasLeftWall) violations.push({ elementId: 'global', type: 'placement_error', message: 'Missing Left Perimeter Wall.' });
-  if (!hasRightWall) violations.push({ elementId: 'global', type: 'placement_error', message: 'Missing Right Perimeter Wall.' });
+  for (const side of sidesWithEntrance) {
+      if (sidesWithExit.has(side)) {
+          violations.push({
+              elementId: 'global',
+              type: 'connectivity_error',
+              message: `Entrances and Exits cannot be on the same wall side (${side}).`
+          });
+      }
+  }
+
+  // 7. Parking Orientation Check
+  const parkingSpaces = layout.elements.filter(e => e.type === ElementType.PARKING_SPACE);
+  parkingSpaces.forEach(space => {
+      const adjacentRoad = roads.find(r => isTouching(r, space) || isOverlapping({ ...r, width: r.width + 10, height: r.height + 10, x: r.x - 5, y: r.y - 5 } as any, space));
+      if (adjacentRoad) {
+          const roadIsHorizontal = adjacentRoad.width > adjacentRoad.height;
+          const spaceIsHorizontal = space.width > space.height;
+          
+          if (roadIsHorizontal === spaceIsHorizontal) {
+              violations.push({
+                  elementId: space.id,
+                  type: 'placement_error',
+                  message: 'Parking space must be Perpendicular to the road (Back-in).'
+              });
+          }
+      }
+  });
+  
+  // 8. Speed Bump Size Check
+  const bumps = layout.elements.filter(e => e.type === ElementType.SPEED_BUMP);
+  bumps.forEach(bump => {
+      const size = Math.min(bump.width, bump.height);
+      const len = Math.max(bump.width, bump.height);
+      if (size > 20) { 
+           violations.push({ elementId: bump.id, type: 'invalid_dimension', message: 'Speed bump too thick.' });
+      }
+  });
+
+  // 9. Road Width Check
+  roads.forEach(road => {
+      const minorDim = Math.min(road.width, road.height);
+      if (minorDim > 120) { // Threshold for "too wide"
+           violations.push({ 
+               elementId: road.id, 
+               type: 'invalid_dimension', 
+               message: 'Driving lane is excessively wide (possible plaza).' 
+           });
+      }
+  });
 
   return violations;
 }

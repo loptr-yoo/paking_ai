@@ -2,7 +2,6 @@ import { ParkingLayout, ElementType, LayoutElement } from '../types';
 
 interface UserInputJSON {
   canvas_size: { width: number; height: number };
-  buildings?: Array<{ id: string; bbox: [number, number, number, number] }>;
   parking?: Array<{ id: string; bbox: [number, number, number, number] }>;
   walls?: Array<{ id: string; bbox: [number, number, number, number] }>;
   entrances?: Array<{ id: string; bbox: [number, number, number, number]; type?: string }>;
@@ -31,7 +30,6 @@ export function parseCustomLayout(json: any): ParkingLayout {
     });
   };
 
-  input.buildings?.forEach(b => convertBBox(b.id, ElementType.BUILDING, b.bbox, b.id));
   input.parking?.forEach(p => convertBBox(p.id, ElementType.PARKING_SPACE, p.bbox, p.id));
   input.walls?.forEach(w => convertBBox(w.id, ElementType.WALL, w.bbox, w.id));
   input.entrances?.forEach(e => {

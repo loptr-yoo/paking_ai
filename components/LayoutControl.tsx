@@ -1,12 +1,11 @@
 import React, { useState } from 'react';
 import { ConstraintViolation } from '../types';
-import { Upload, AlertTriangle, CheckCircle, BrainCircuit, FileJson, Sparkles, Wrench } from 'lucide-react';
+import { Upload, AlertTriangle, CheckCircle, BrainCircuit, FileJson, Sparkles } from 'lucide-react';
 
 interface LayoutControlProps {
   onUpload: (json: string) => void;
   onGenerate: (prompt: string) => void;
   onAugment: () => void;
-  onFix: () => void;
   isGenerating: boolean;
   violations: ConstraintViolation[];
   hasLayout: boolean;
@@ -16,7 +15,6 @@ const LayoutControl: React.FC<LayoutControlProps> = ({
   onUpload, 
   onGenerate, 
   onAugment,
-  onFix,
   isGenerating, 
   violations,
   hasLayout 
@@ -125,18 +123,6 @@ const LayoutControl: React.FC<LayoutControlProps> = ({
             </span>
         </div>
         
-        {/* Fix Button */}
-        {violations.length > 0 && (
-          <button
-            onClick={onFix}
-            disabled={isGenerating}
-            className="mb-3 w-full bg-amber-600/20 hover:bg-amber-600/30 border border-amber-600/50 text-amber-200 text-xs font-medium py-1.5 px-3 rounded transition-colors flex items-center justify-center gap-2"
-          >
-             <Wrench className="w-3 h-3" />
-             {isGenerating ? "Fixing..." : "✨ AI: Auto-Fix Issues"}
-          </button>
-        )}
-
         <div className="flex-1 overflow-y-auto space-y-2 pr-1">
             {violations.length === 0 ? (
                 <div className="text-center py-8 text-slate-500">

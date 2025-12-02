@@ -6,7 +6,6 @@ export enum ElementType {
   RAMP = 'slope',
   PILLAR = 'pillar',
   WALL = 'wall',
-  BUILDING = 'building',
   ENTRANCE = 'entrance',
   EXIT = 'exit',
   STAIRCASE = 'staircase',
