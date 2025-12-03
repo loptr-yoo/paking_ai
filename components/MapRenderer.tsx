@@ -12,7 +12,7 @@ const ELEMENT_STYLES: Record<string, { fill: string; stroke: string; opacity: nu
   [ElementType.ROAD]: { fill: '#334155', stroke: '#475569', opacity: 1 }, 
   [ElementType.PARKING_SPACE]: { fill: '#1e3a8a', stroke: '#60a5fa', opacity: 0.4 }, 
   [ElementType.SIDEWALK]: { fill: 'none', stroke: 'none', opacity: 0.9 }, 
-  [ElementType.RAMP]: { fill: 'url(#rampGradient)', stroke: '#9333ea', opacity: 0.7 },
+  [ElementType.RAMP]: { fill: '#E91E63', stroke: '#C2185B', opacity: 0.9 }, // Updated to vivid magenta
   [ElementType.PILLAR]: { fill: '#94a3b8', stroke: '#64748b', opacity: 1 }, 
   [ElementType.WALL]: { fill: '#94a3b8', stroke: '#64748b', opacity: 1 },
   [ElementType.ENTRANCE]: { fill: '#166534', stroke: '#22c55e', opacity: 0.8 },
@@ -22,7 +22,7 @@ const ELEMENT_STYLES: Record<string, { fill: string; stroke: string; opacity: nu
   [ElementType.CHARGING_STATION]: { fill: '#10b981', stroke: '#34d399', opacity: 0.6 },
   [ElementType.GUIDANCE_SIGN]: { fill: '#facc15', stroke: '#ca8a04', opacity: 1, labelColor: 'black' },
   [ElementType.SAFE_EXIT]: { fill: '#22c55e', stroke: '#15803d', opacity: 1 },
-  [ElementType.SPEED_BUMP]: { fill: 'url(#speedBumpPattern)', stroke: '#854d0e', opacity: 0.9 }, 
+  [ElementType.SPEED_BUMP]: { fill: '#00BCD4', stroke: '#0097A7', opacity: 1 }, // Updated to bright cyan
   [ElementType.FIRE_EXTINGUISHER]: { fill: '#dc2626', stroke: '#991b1b', opacity: 1 },
   [ElementType.LANE_LINE]: { fill: 'none', stroke: '#facc15', opacity: 0.8 },
   [ElementType.CONVEX_MIRROR]: { fill: '#f97316', stroke: '#ea580c', opacity: 1 },
@@ -44,25 +44,7 @@ const MapRenderer: React.FC<MapRendererProps> = ({ layout, violations }) => {
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove();
 
-    const defs = svg.append("defs");
-    
-    // Ramp Gradient
-    const rampGrad = defs.append("linearGradient")
-      .attr("id", "rampGradient")
-      .attr("x1", "0%").attr("y1", "0%")
-      .attr("x2", "100%").attr("y2", "0%");
-    rampGrad.append("stop").attr("offset", "0%").attr("stop-color", "#7e22ce").attr("stop-opacity", 0.4);
-    rampGrad.append("stop").attr("offset", "100%").attr("stop-color", "#d8b4fe").attr("stop-opacity", 0.9);
-
-    // Speed Bump Stripes Pattern
-    const pattern = defs.append("pattern")
-      .attr("id", "speedBumpPattern")
-      .attr("width", 10)
-      .attr("height", 10)
-      .attr("patternUnits", "userSpaceOnUse")
-      .attr("patternTransform", "rotate(45)");
-    pattern.append("rect").attr("width", 5).attr("height", 10).attr("fill", "#eab308"); // Yellow
-    pattern.append("rect").attr("x", 5).attr("width", 5).attr("height", 10).attr("fill", "#000"); // Black
+    // Removed unused defs (gradients/patterns) as specific colors are now solid.
 
     const zoomGroup = svg.append("g");
     
