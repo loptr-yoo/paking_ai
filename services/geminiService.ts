@@ -43,9 +43,9 @@ async function generateWithFallback(
 // Helper to normalize AI output types to internal Enum values
 const normalizeType = (t: string): string => {
   const lower = t.toLowerCase();
-  if (lower === 'ramp') return ElementType.RAMP; // Maps to 'slope'
-  if (lower === 'speed_bump') return ElementType.SPEED_BUMP; // Maps to 'deceleration_zone'
-  if (lower === 'road') return ElementType.ROAD; // Maps to 'driving_lane'
+  if (lower === 'ramp') return ElementType.RAMP; 
+  if (lower === 'speed_bump') return ElementType.SPEED_BUMP; 
+  if (lower === 'road') return ElementType.ROAD; 
   if (lower === 'pedestrian_path') return ElementType.SIDEWALK; 
   if (lower === 'ground_line') return ElementType.LANE_LINE;
   return lower;
@@ -53,21 +53,16 @@ const normalizeType = (t: string): string => {
 
 // Helper to clean and parse JSON, with simple repair for truncation
 const cleanAndParseJSON = (text: string): any => {
-  // 1. Remove Markdown code blocks
   let cleanText = text.replace(/```json\s*|```/g, "").trim();
 
   try {
     return JSON.parse(cleanText);
   } catch (e) {
-    // 2. Attempt simple repair for truncation
     console.warn("JSON Parse failed. Attempting repair...");
-    
-    // Very basic repair: check if it ended abruptly and close open structures
     const stack: string[] = [];
     let inString = false;
     let isEscaped = false;
 
-    // Re-scan to build stack
     for (const char of cleanText) {
         if (inString) {
             if (char === '"' && !isEscaped) {
@@ -91,10 +86,7 @@ const cleanAndParseJSON = (text: string): any => {
             }
         }
     }
-
-    // Close open string
     if (inString) cleanText += '"';
-    // Close open structures (reverse order)
     while (stack.length > 0) {
         cleanText += stack.pop();
     }
@@ -107,6 +99,134 @@ const cleanAndParseJSON = (text: string): any => {
   }
 };
 
+/**
+ * PROCEDURAL PARKING GENERATOR
+ * Automatically fills ground areas with parking spaces based on geometry.
+ * INCLUDES PROCEDURAL CHARGING STATION PLACEMENT
+ */
+const fillParkingAutomatically = (layout: ParkingLayout): ParkingLayout => {
+  const newElements = [...layout.elements];
+  const grounds = newElements.filter(e => e.type === ElementType.GROUND);
+  
+  // Clean up existing tiny/auto-gen parking spots & charging stations to regenerate them
+  const cleanElements = newElements.filter(e => {
+    if (e.type === ElementType.PARKING_SPACE) return false; // Remove all to regenerate strictly
+    if (e.type === ElementType.CHARGING_STATION) return false; // Remove all to regenerate strictly
+    return true;
+  });
+
+  const generatedSpots: LayoutElement[] = [];
+  let spotCounter = 1000;
+  let chargeCounter = 5000;
+
+  grounds.forEach(ground => {
+    // Check overlaps
+    const hasObstacle = cleanElements.some(e => 
+      (e.type === ElementType.WALL || e.type === ElementType.STAIRCASE || e.type === ElementType.ENTRANCE) &&
+      e.x >= ground.x && e.x + e.width <= ground.x + ground.width &&
+      e.y >= ground.y && e.y + e.height <= ground.y + ground.height
+    );
+    if (hasObstacle) return;
+
+    const gW = ground.width;
+    const gH = ground.height;
+    const isHorizontalStrip = gW > gH;
+    
+    const longDim = isHorizontalStrip ? gW : gH;
+    const shortDim = isHorizontalStrip ? gH : gW;
+
+    const BUFFER = 2; 
+    
+    // STRICT DIMENSIONS (1:2 Ratio)
+    // 12.5 width x 25 depth units
+    const SPOT_WIDTH = 12.5; 
+    const SPOT_DEPTH = 25; 
+
+    // Determine layout strategy: Single vs Double
+    // If we have enough depth (> 50 + buffers), go double row back-to-back
+    let isDoubleRow = shortDim >= (SPOT_DEPTH * 2) + (BUFFER * 2);
+    
+    // If it's a very narrow strip (side ground), enforce Single Row even if logic says otherwise
+    // Assuming standard side grounds are ~30-40 units
+    if (shortDim < 50) isDoubleRow = false;
+
+    // Calculate how many spots fit in the long dimension
+    const numSpots = Math.floor((longDim - (BUFFER * 2)) / SPOT_WIDTH);
+
+    // GENERATE
+    for (let r = 0; r < (isDoubleRow ? 2 : 1); r++) {
+      for (let i = 0; i < numSpots; i++) {
+        let x, y, w, h;
+
+        // PARKING SPOT COORDINATES
+        if (isHorizontalStrip) {
+          // Horizontal Strip -> Vertical Spots
+          w = SPOT_WIDTH;
+          h = SPOT_DEPTH;
+          x = ground.x + BUFFER + (i * SPOT_WIDTH);
+          // Row 0: Top (Back is Up/Top), Row 1: Bottom (Back is Down/Bottom)
+          y = (r === 0) 
+            ? ground.y + BUFFER 
+            : ground.y + gH - SPOT_DEPTH - BUFFER;
+        } else {
+          // Vertical Strip -> Horizontal Spots
+          w = SPOT_DEPTH;
+          h = SPOT_WIDTH;
+          // Row 0: Left (Back is Left), Row 1: Right (Back is Right)
+          x = (r === 0) 
+             ? ground.x + BUFFER 
+             : ground.x + gW - SPOT_DEPTH - BUFFER;
+          y = ground.y + BUFFER + (i * SPOT_WIDTH);
+        }
+
+        const spotId = `gen_p_${spotCounter++}`;
+        generatedSpots.push({
+          id: spotId,
+          type: ElementType.PARKING_SPACE,
+          x, y, width: w, height: h,
+          rotation: 0
+        });
+
+        // CHARGING STATION GENERATION
+        // Rule: Every other spot (odd/even check), placed at the "butt" (back)
+        if (i % 2 === 0) {
+            let cx, cy, cw, ch;
+            const STATION_SIZE = 5; // Small block
+            const STATION_THICKNESS = 4;
+
+            if (isHorizontalStrip) {
+                // Vertical Spot
+                cw = 6; ch = 4;
+                cx = x + (w - cw) / 2; // Center horizontally on spot
+                // Row 0 (Top): Butt is at Top (y) -> Station above y
+                // Row 1 (Bottom): Butt is at Bottom (y+h) -> Station below y+h
+                cy = (r === 0) ? y - ch : y + h;
+            } else {
+                // Horizontal Spot
+                cw = 4; ch = 6;
+                cy = y + (h - ch) / 2; // Center vertically on spot
+                // Row 0 (Left): Butt is Left (x) -> Station left of x
+                // Row 1 (Right): Butt is Right (x+w) -> Station right of x+w
+                cx = (r === 0) ? x - cw : x + w;
+            }
+
+            generatedSpots.push({
+                id: `gen_ch_${chargeCounter++}`,
+                type: ElementType.CHARGING_STATION,
+                x: cx, y: cy, width: cw, height: ch,
+                rotation: 0
+            });
+        }
+      }
+    }
+  });
+
+  return {
+    ...layout,
+    elements: [...cleanElements, ...generatedSpots]
+  };
+};
+
 // Internal helper to run the fix operation
 const runFixOperation = async (layout: ParkingLayout, violations: ConstraintViolation[], ai: GoogleGenAI, onLog?: (msg: string) => void): Promise<ParkingLayout> => {
   const prompt = `
@@ -116,21 +236,19 @@ const runFixOperation = async (layout: ParkingLayout, violations: ConstraintViol
     
     Violations (Top Priority): ${JSON.stringify(violations)}
     
-    INSTRUCTIONS (AGGRESSIVE FIXING):
-    1. **DELETE IS BETTER THAN MOVE**: 
-       - If a 'parking_space' overlaps a 'wall', 'road', or 'pillar' by ANY amount, DELETE IT immediately. 
-       - Do not try to micro-adjust coordinates for overlaps, it is inefficient. DELETE is the correct action.
-    2. **Intersections**: If 'speed_bump', 'lane_line', or 'pedestrian_path' is inside an intersection, DELETE it.
-    3. **Safe Exits**: If 'safe_exit' is not valid (e.g. on road), MOVE it to valid empty ground near stairs. If no space, DELETE it.
+    INSTRUCTIONS (PRIORITIZE REPAIR OVER DELETE):
+    1. **CONDITIONAL DELETE (>= 40% OVERLAP)**: 
+       - If a 'parking_space' overlaps a solid object (wall, road, pillar) by **40% OR MORE** of its area, DELETE IT immediately.
+       - If overlap is < 40%, you MUST try to MOVE (translate) or RESIZE (shrink slightly) the parking space to fit first. Only delete if moving creates new conflicts.
+    2. **Pedestrian Path Logic**: 
+       - Paths MUST be on roads. If a 'pedestrian_path' is floating on 'ground' or 'parking_space', DELETE it.
+       - Ensure orientation matches road (Horizontal path on Vertical road).
+    3. **Safe Exits**: If 'safe_exit' is on road/parking, MOVE it to empty ground near stairs.
     4. **Orientation**: If 'parking_space' is parallel to road, ROTATE it 90 degrees.
     5. **Ramps**: If 'slope' overlaps road, RESIZE/MOVE to be strictly ADJACENT.
     6. **Pillars**: If a pillar blocks a road, MOVE the pillar.
     7. **Buffer**: Ensure 'parking_space' grids are at least 5 units away from 'driving_lane' edges.
-    
-    GENERAL RULES:
-    - DO NOT delete 'wall' or 'road' unless absolutely necessary for connectivity.
-    - Ensure 'entrance' and 'exit' exist.
-    - DO NOT generate 'building'.
+    8. **Charging Stations**: Ensure they are attached to parking spaces and do not block roads.
     
     Return the FULL updated JSON layout.
   `;
@@ -187,14 +305,13 @@ const runFixOperation = async (layout: ParkingLayout, violations: ConstraintViol
 // Internal helper loop
 const ensureValidLayout = async (layout: ParkingLayout, ai: GoogleGenAI, onLog?: (msg: string) => void): Promise<ParkingLayout> => {
   let currentLayout = layout;
-  let stableSnapshot = JSON.parse(JSON.stringify(layout)); // Snapshot of the last "good" (or least bad) state
+  let stableSnapshot = JSON.parse(JSON.stringify(layout)); 
   let previousViolationsCount = validateLayout(layout).length;
   
   let consecutiveRegressionCount = 0;
   let hasReverted = false;
 
   const MAX_ITERATIONS = 5; 
-  // INCREASED BATCH SIZE: Send up to 100 violations (Fix All / 4/5ths)
   const MAX_VIOLATIONS_TO_SEND = 100;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
@@ -202,13 +319,11 @@ const ensureValidLayout = async (layout: ParkingLayout, ai: GoogleGenAI, onLog?:
     const violations = validateLayout(currentLayout);
     const currentViolationsCount = violations.length;
 
-    // Check Stop Condition 1: Fewer than 4 violations
     if (currentViolationsCount < 4) {
         if (onLog) onLog(`Auto-fix stopped: Violation count (${currentViolationsCount}) is acceptable (<4).`);
         break;
     }
 
-    // Check Stop Condition 2: Remaining violations are ONLY related to Road vs Wall overlaps
     const isOnlyRoadWallIssues = violations.every(v => {
         if (v.type !== 'overlap') return false;
         const el1 = currentLayout.elements.find(e => e.id === v.elementId);
@@ -229,28 +344,22 @@ const ensureValidLayout = async (layout: ParkingLayout, ai: GoogleGenAI, onLog?:
         if (onLog) onLog(`Regression detected: Violations increased from ${previousViolationsCount} to ${currentViolationsCount} (Streak: ${consecutiveRegressionCount})`);
 
         if (consecutiveRegressionCount >= 2) {
-            // Double regression detected
             if (hasReverted) {
-                // We already tried reverting once and it failed again. STOP to prevent infinite loop.
                 if (onLog) onLog(`❌ Persistent regression after revert. Giving up and restoring last stable snapshot.`);
                 currentLayout = stableSnapshot;
                 break;
             }
 
-            // First time hitting double regression: Revert to stable snapshot
             if (onLog) onLog(`⚠️ Double regression detected. Reverting to stable snapshot and retrying...`);
             currentLayout = stableSnapshot;
             previousViolationsCount = validateLayout(stableSnapshot).length;
             consecutiveRegressionCount = 0;
             hasReverted = true;
-            continue; // Skip the fix step this loop, just reset state
+            continue; 
         }
-        // Single regression: Continue loop, hope AI fixes it next time. 
-        // DO NOT update stableSnapshot.
     } else {
-        // Improvement or same
         consecutiveRegressionCount = 0;
-        stableSnapshot = JSON.parse(JSON.stringify(currentLayout)); // Update stable point
+        stableSnapshot = JSON.parse(JSON.stringify(currentLayout)); 
         previousViolationsCount = currentViolationsCount;
     }
     // --- REGRESSION LOGIC END ---
@@ -291,24 +400,16 @@ export const generateParkingLayout = async (description: string, onLog?: (msg: s
       contents: `Generate a COARSE-GRAINED JSON underground parking layout (0,0 at top-left) for: "${description}".
       
       SCOPE: Generate ONLY the structural foundation.
-      REQUIRED TYPES: 'wall', 'pillar', 'driving_lane' (road), 'parking_space', 'ramp', 'entrance', 'exit', 'staircase', 'elevator'.
-      DO NOT GENERATE: 'lane_line', 'guidance_sign', 'speed_bump', 'charging_station', 'pedestrian_path'.
+      REQUIRED TYPES: 'wall', 'pillar', 'driving_lane' (road), 'ground' (for parking areas), 'ramp', 'entrance', 'exit', 'staircase', 'elevator'.
+      DO NOT GENERATE: 'lane_line', 'guidance_sign', 'speed_bump', 'charging_station', 'pedestrian_path', 'parking_space' (will be auto-filled).
       
       CRITICAL RULES:
       1. **High Road Density**: Roads must connect entrances/exits effectively.
       2. **Perimeter Wall**: Enclose the ENTIRE boundary.
-      3. **SAFETY BUFFERS (MANDATORY)**: You MUST leave a 5-unit empty buffer between 'driving_lane' and 'parking_space' grids. Do not place parking spots directly touching the road edge line, leave a small gap.
-      4. **SMART PARKING PLACEMENT (Topology Rules)**:
-         - **Orientation**: MUST be Perpendicular (Back-in) to the road. NO Parallel parking.
-         - **Side/Peripheral Ground**: Place a SINGLE row of 'parking_space' along the edge facing the 'driving_lane'.
-         - **Island/Central Ground**: Place 'parking_space' rows on ALL 4 SIDES (Perimeter ring) facing outwards to the roads.
-         - **Row Length**: Parking rows should occupy approx 80% (4/5) of the ground edge length. Center the row.
-         - **Conflict Resolution**: 'parking_space' MUST NOT overlap 'pillar'. If a spot overlaps a pillar, DELETE that specific parking spot (preferred) or shift the pillar slightly.
+      3. **SAFETY BUFFERS**: Leave a 5-unit empty buffer between 'driving_lane' and 'ground' zones.
+      4. **Ground Generation**: Define large rectangular 'ground' areas clearly separated from roads. These will be filled with parking spots programmatically.
       5. **Connectivity**: At least 1 Entrance and 1 Exit on DIFFERENT sides.
-      6. **No Buildings**: Use ground/wall context for stairs/elevators.
-      7. **Ramps/Slopes**: Must be ADJACENT to Entrances/Exits. Width MUST MATCH the entrance width. Do not place them on top of the road.
-      8. **Pillars**: Structural support, usually near walls or grid intersections, NOT on roads.
-      9. **Layout Strategy**: Place Main Roads first, then PACK the remaining areas with Parking grids.
+      6. **Layout Strategy**: Place Main Roads first, then PACK the remaining areas with large Ground rectangles.
       
       Output JSON using SHORT keys (t,x,y,w,h,r).
       `,
@@ -390,24 +491,18 @@ export const augmentLayoutWithRoads = async (currentLayout: ParkingLayout, onLog
         Canvas: ${currentLayout.width}x${currentLayout.height}
 
         TASKS (ADD THESE ELEMENTS):
-        1. **BACKFILL PARKING**: Check for empty 'ground' areas. Apply the TOPOLOGY RULES:
-           - **Side Ground**: Single row, perpendicular, 80% length.
-           - **Island Ground**: Perimeter ring, perpendicular, 80% length.
-           - **Buffer**: Maintain 5-unit gap from roads.
-           - Delete any new spots that overlap existing 'pillar' or 'wall'.
-        2. **Charging Stations**: Designate specific zones for 'charging_station'. Count >= Total Parking / 4.
-        3. **Guidance Signs**: 'guidance_sign' (arrow) at EVERY intersection. **CRITICAL**: Calculate precise geometric angle from the sign's (x,y) to the nearest 'exit' (x,y). Set 'r' (rotation) so 0=East, 90=South, 180=West, 270=North.
-        4. **Pedestrian Paths**: 'pedestrian_path' (zebra crossing) across roads connecting parking areas. OPTIMIZE placement for shortest path.
-        5. **Ground Lines**: 'ground_line' (dashed center lines) on roads. One per segment. DO NOT place in intersections.
-        6. **Speed Bumps**: 'speed_bump' (small, thin) near long straight roads. ONLY on driving lanes, NEVER in intersections.
-        7. **Safe Exits**: 'safe_exit' MUST overlap GROUND only (NOT road, NOT parking, NOT wall) AND be adjacent to 'staircase'.
-        8. **Fire Extinguishers**: 'fire_extinguisher' MUST overlap GROUND only (NOT road, NOT parking). Place near pillars or walls.
+        1. **Guidance Signs**: 'guidance_sign' (arrow) at EVERY intersection. Point to nearest EXIT.
+        2. **Pedestrian Paths**: 'pedestrian_path' (zebra crossing) across roads.
+           - **GEOMETRY & ORIENTATION**:
+             - **CROSSING VERTICAL ROAD**: Path MUST be HORIZONTAL (Width approx = Road Width, Height approx 15-20).
+             - **CROSSING HORIZONTAL ROAD**: Path MUST be VERTICAL (Height approx = Road Height, Width approx 15-20).
+           - **Placement**: MUST be fully contained within the 'driving_lane' boundary. Connect parking clusters.
+        3. **Ground Lines**: 'ground_line' (dashed center lines) on roads. One per segment.
+        4. **Speed Bumps**: 'speed_bump' (small, thin) perpendicular to road flow.
+        5. **Safe Exits**: 'safe_exit' adjacent to 'staircase' on GROUND only.
         
-        CONSTRAINTS:
-        - Do NOT move Walls or Roads significantly.
-        - **Intersections**: Do NOT place 'speed_bump', 'lane_line', or 'pedestrian_path' inside the box where two roads intersect. Only 'guidance_sign' belongs there.
-        - Ensure Pedestrian Paths have correct orientation (stripes perpendicular to path direction).
-
+        NOTE: Do NOT generate 'parking_space' or 'charging_station' manually. They will be auto-filled by the system.
+        
         Output JSON using SHORT keys: t, x, y, w, h, r, l.
         `,
         config: {
@@ -457,8 +552,11 @@ export const augmentLayoutWithRoads = async (currentLayout: ParkingLayout, onLog
         }))
     };
 
-    if (onLog) onLog("Validating details...");
-    return await ensureValidLayout(layout, ai, onLog);
+    if (onLog) onLog("Auto-filling parking spaces & charging stations...");
+    const filledLayout = fillParkingAutomatically(layout);
+
+    if (onLog) onLog("Validating and Fixing details...");
+    return await ensureValidLayout(filledLayout, ai, onLog);
 
   } catch (error) {
     console.error("Augment failed:", error);

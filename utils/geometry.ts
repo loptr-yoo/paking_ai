@@ -195,6 +195,9 @@ export function validateLayout(layout: ParkingLayout): ConstraintViolation[] {
   ];
 
   const roads = layout.elements.filter(e => e.type === ElementType.ROAD);
+  const parkingSpaces = layout.elements.filter(e => e.type === ElementType.PARKING_SPACE);
+  const walls = layout.elements.filter(e => e.type === ElementType.WALL);
+  const pillars = layout.elements.filter(e => e.type === ElementType.PILLAR);
   
   // Must be ON Road
   const dependentItems = layout.elements.filter(e => itemsOnRoad.includes(e.type as ElementType));
@@ -225,9 +228,7 @@ export function validateLayout(layout: ParkingLayout): ConstraintViolation[] {
   // 4b. Strict Ground Only Check (Safe Exit, Fire Extinguisher)
   const itemsOnGroundOnly = [ElementType.SAFE_EXIT, ElementType.FIRE_EXTINGUISHER];
   const groundOnlyItems = layout.elements.filter(e => itemsOnGroundOnly.includes(e.type as ElementType));
-  const parkingSpaces = layout.elements.filter(e => e.type === ElementType.PARKING_SPACE);
-  const walls = layout.elements.filter(e => e.type === ElementType.WALL);
-
+  
   groundOnlyItems.forEach(item => {
       // Check Parking Overlap
       const onParking = parkingSpaces.some(space => isOverlapping(space, item));
@@ -249,8 +250,43 @@ export function validateLayout(layout: ParkingLayout): ConstraintViolation[] {
       }
   });
 
+  // 4c. Pillar Isolation Check (Pillar can only touch Wall or Ground)
+  pillars.forEach(pillar => {
+      // Check Overlap with Road (already covered by solid check generally, but explicit here for clarity)
+      // Check Overlap with Parking
+      const onParking = parkingSpaces.some(space => isTouching(space, pillar));
+      if (onParking) {
+          violations.push({
+              elementId: pillar.id,
+              type: 'overlap',
+              message: 'Pillar must not overlap Parking Space.'
+          });
+      }
+  });
 
-  // 4c. Intersection Constraints
+  // 4d. Pedestrian Path Isolation Check (Sidewalk can only touch Road/LaneLine)
+  const sidewalks = layout.elements.filter(e => e.type === ElementType.SIDEWALK);
+  sidewalks.forEach(sw => {
+       const onParking = parkingSpaces.some(space => isTouching(space, sw));
+       if (onParking) {
+           violations.push({
+               elementId: sw.id,
+               type: 'overlap',
+               message: 'Pedestrian Path cannot overlap Parking Space.'
+           });
+       }
+       const onPillar = pillars.some(p => isTouching(p, sw));
+       if (onPillar) {
+            violations.push({
+               elementId: sw.id,
+               type: 'overlap',
+               message: 'Pedestrian Path cannot overlap Pillar.'
+           });
+       }
+  });
+
+
+  // 4e. Intersection Constraints
   // NO elements allowed in intersections except GUIDANCE_SIGN
   const noIntersectionItems = [ElementType.LANE_LINE, ElementType.SPEED_BUMP, ElementType.SIDEWALK, ElementType.PARKING_SPACE];
   const intersectionRestricted = layout.elements.filter(e => noIntersectionItems.includes(e.type as ElementType));
@@ -389,7 +425,7 @@ export function validateLayout(layout: ParkingLayout): ConstraintViolation[] {
   const ramps = layout.elements.filter(e => e.type === ElementType.RAMP);
   ramps.forEach(ramp => {
       // 1. Must be Adjacent to Road, NOT Inside
-      const insideRoad = roads.some(r => isOverlapping(r, ramp)); // isOverlapping checks for significant intersection
+      const insideRoad = roads.some(r => isOverlapping(r, ramp)); 
       if (insideRoad) {
            violations.push({ elementId: ramp.id, type: 'placement_error', message: 'Slope/Ramp must be adjacent to the road, not overlapping inside it.' });
       }

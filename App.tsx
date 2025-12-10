@@ -23,6 +23,23 @@ const App: React.FC = () => {
       setLogs(prev => [...prev, msg]);
   };
 
+  const downloadLayoutAsJSON = (layoutData: ParkingLayout) => {
+    if (!layoutData) return;
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(layoutData, null, 2));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", "semantic_parking_layout.json");
+    document.body.appendChild(downloadAnchorNode);
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+  };
+
+  const handleDownload = () => {
+      if (layout) {
+          downloadLayoutAsJSON(layout);
+      }
+  };
+
   const handleGenerate = async (prompt: string) => {
     setIsGenerating(true);
     setError(null);
@@ -62,6 +79,10 @@ const App: React.FC = () => {
         // Suppress visual errors on completion
         setViolations([]);
         handleLog("Refinement complete. Visualizing results...");
+        
+        // Auto-download as requested
+        downloadLayoutAsJSON(augmentedLayout);
+        handleLog("JSON file downloaded automatically.");
       } else {
         setError("AI could not identify valid refinements.");
       }
@@ -118,6 +139,7 @@ const App: React.FC = () => {
       <LayoutControl 
         onGenerate={handleGenerate} 
         onRefine={handleRefine}
+        onDownload={handleDownload}
         isGenerating={isGenerating}
         violations={violations}
         hasLayout={!!layout}

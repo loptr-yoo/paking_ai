@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { ConstraintViolation } from '../types';
-import { BrainCircuit, Sparkles, Terminal, CheckCircle, AlertTriangle, Layers, Map as MapIcon, Clock } from 'lucide-react';
+import { BrainCircuit, Sparkles, Terminal, CheckCircle, AlertTriangle, Layers, Map as MapIcon, Clock, Download } from 'lucide-react';
 
 interface LayoutControlProps {
   onGenerate: (prompt: string) => void;
   onRefine: () => void;
+  onDownload: () => void;
   isGenerating: boolean;
   violations: ConstraintViolation[];
   hasLayout: boolean;
@@ -15,6 +16,7 @@ interface LayoutControlProps {
 const LayoutControl: React.FC<LayoutControlProps> = ({ 
   onGenerate, 
   onRefine, 
+  onDownload,
   isGenerating, 
   violations,
   hasLayout,
@@ -82,6 +84,16 @@ const LayoutControl: React.FC<LayoutControlProps> = ({
                         <span className="text-[10px] opacity-70 bg-purple-500/20 px-1.5 py-0.5 rounded ml-1">Fine</span>
                     </>
                 )}
+            </button>
+
+            {/* Step 3: Download */}
+            <button
+                onClick={onDownload}
+                disabled={!hasLayout || isGenerating}
+                className={`w-full border border-slate-700 text-sm font-medium py-2.5 px-4 rounded-lg transition-all flex items-center justify-center gap-2 ${!hasLayout || isGenerating ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-800 text-slate-300'}`}
+            >
+                <Download className="w-4 h-4" />
+                Download JSON
             </button>
         </div>
       </div>
