@@ -25,6 +25,24 @@ export const PROMPTS = {
         - Create a realistic and varied layout. Do not feel constrained to symmetrical designs.
 
     Output JSON using SHORT keys (t,x,y,w,h,r).
+
+    **FEW-SHOT EXAMPLE**:
+    \`\`\`json
+    {
+      "width": 800,
+      "height": 600,
+      "elements": [
+        {"t": "wall", "x": 0, "y": 0, "w": 800, "h": 20},
+        {"t": "wall", "x": 0, "y": 580, "w": 800, "h": 20},
+        {"t": "entrance", "x": 50, "y": 0, "w": 40, "h": 20},
+        {"t": "ramp", "x": 50, "y": 20, "w": 40, "h": 60},
+        {"t": "driving_lane", "x": 20, "y": 80, "w": 760, "h": 60},
+        {"t": "ground", "x": 20, "y": 140, "w": 760, "h": 100},
+        {"t": "exit", "x": 700, "y": 0, "w": 40, "h": 20},
+        {"t": "ramp", "x": 700, "y": 20, "w": 40, "h": 60}
+      ]
+    }
+    \`\`\`
   `,
 
   refinement: (simplifiedLayout: any, width: number, height: number) => `
@@ -50,6 +68,22 @@ export const PROMPTS = {
        - Add 'speed_bump' near ramps or intersections.
   
     Output JSON using SHORT keys: t, x, y, w, h, r, l.
+
+    **FEW-SHOT EXAMPLE**:
+    \`\`\`json
+    {
+      "width": 800,
+      "height": 600,
+      "elements": [
+         {"t": "wall", "x": 0, "y": 0, "w": 800, "h": 20},
+         {"t": "driving_lane", "x": 20, "y": 80, "w": 760, "h": 60},
+         {"t": "ground_line", "x": 20, "y": 109, "w": 760, "h": 2},
+         {"t": "pedestrian_path", "x": 100, "y": 80, "w": 20, "h": 60},
+         {"t": "guidance_sign", "x": 150, "y": 140, "w": 10, "h": 10, "r": 90},
+         {"t": "elevator", "x": 200, "y": 200, "w": 30, "h": 30}
+      ]
+    }
+    \`\`\`
   `,
 
   fix: (layout: ParkingLayout, violations: ConstraintViolation[]) => `
@@ -71,5 +105,19 @@ export const PROMPTS = {
     5. **Chain of Thought**: First, add a field "_thinking" to explain your fix plan. Then return the full JSON.
 
     Return the **FULL, UPDATED** JSON layout object.
+
+    **FEW-SHOT EXAMPLE**:
+    \`\`\`json
+    {
+      "_thinking": "The ramp was overlapping the road at (50, 80). I moved the road down by 20 units and adjusted the ramp length.",
+      "width": 800,
+      "height": 600,
+      "elements": [
+        {"t": "entrance", "x": 50, "y": 0, "w": 40, "h": 20},
+        {"t": "ramp", "x": 50, "y": 20, "w": 40, "h": 60},
+        {"t": "driving_lane", "x": 20, "y": 80, "w": 760, "h": 60}
+      ]
+    }
+    \`\`\`
   `
 };

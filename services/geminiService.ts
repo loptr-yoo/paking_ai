@@ -74,9 +74,44 @@ const cleanAndParseJSON = (text: string): any => {
     const repaired = jsonrepair(cleanText);
     const parsed = JSON.parse(repaired);
 
-    // Normalize Root
-    let rawRoot = parsed;
-    if (Array.isArray(parsed)) rawRoot = { width: 800, height: 600, elements: parsed };
+    // Default values
+    let elements: any[] = [];
+    let width = 800;
+    let height = 600;
+
+    // Helper to check if an array looks like elements
+    const isElementArray = (arr: any[]) => Array.isArray(arr) && arr.length > 0 && (arr[0].t || arr[0].type || arr[0].x !== undefined);
+
+    // 1. Direct Array
+    if (Array.isArray(parsed)) {
+       if (isElementArray(parsed)) {
+           elements = parsed;
+       }
+    } 
+    // 2. Object wrapper
+    else if (typeof parsed === 'object' && parsed !== null) {
+       if (parsed.width) width = Number(parsed.width);
+       if (parsed.height) height = Number(parsed.height);
+
+       // Check standard keys
+       if (Array.isArray(parsed.elements)) elements = parsed.elements;
+       else if (Array.isArray(parsed.layout)) elements = parsed.layout;
+       else if (Array.isArray(parsed.parking_layout)) elements = parsed.parking_layout;
+       else if (Array.isArray(parsed.data)) elements = parsed.data;
+       else if (Array.isArray(parsed.items)) elements = parsed.items;
+
+       // 3. Recursive/Fuzzy search if still empty
+       if (elements.length === 0) {
+           for (const key in parsed) {
+               if (Array.isArray(parsed[key]) && isElementArray(parsed[key])) {
+                   elements = parsed[key];
+                   break;
+               }
+           }
+       }
+    }
+
+    const rawRoot = { width, height, elements };
     
     // Zod Validation & Transform
     const result = LayoutSchema.safeParse(rawRoot);
@@ -88,7 +123,7 @@ const cleanAndParseJSON = (text: string): any => {
     return result.data;
   } catch (e) {
     console.error("Critical JSON Parse Error", e);
-    throw new Error("Failed to parse AI response.");
+    throw new Error(`Failed to parse AI response: ${(e as Error).message}`);
   }
 };
 
@@ -111,13 +146,8 @@ const mapToInternalLayout = (rawData: any): ParkingLayout => {
 
 // AUTO FILL LOGIC (Preserved but shortened for brevity in this response)
 const fillParkingAutomatically = (layout: ParkingLayout): ParkingLayout => {
-  // ... (Same logic as before, just ensuring imports are correct)
-  // For brevity, assuming the logic is identical to previous version.
-  // Re-implementing specific parts needed for function signature match.
   const newElements = [...layout.elements];
   const grounds = newElements.filter(e => e.type === ElementType.GROUND);
-  // ... (Full implementation implied or copied if needed. Keeping it minimal for file update limit)
-  // Actually, I must provide full content.
   
   const obstacles = newElements.filter(e => 
     [ElementType.WALL, ElementType.STAIRCASE, ElementType.ELEVATOR, ElementType.PILLAR,
@@ -218,7 +248,10 @@ const ensureValidLayout = async (layout: ParkingLayout, ai: GoogleGenAI, fixMode
 
 export const generateParkingLayout = async (description: string, onLog?: (msg: string) => void): Promise<ParkingLayout> => {
   const apiKey = getApiKey();
-  if (!apiKey) return fallbackLayout;
+  if (!apiKey) {
+      if(onLog) onLog("❌ Error: No API Key found in env.");
+      return fallbackLayout;
+  }
   const ai = new GoogleGenAI({ apiKey });
   const tier = await determineModelTier(ai, onLog);
   const genModel = tier === 'HIGH' ? MODEL_2_5_PRO : MODEL_FLASH;
@@ -234,8 +267,15 @@ export const generateParkingLayout = async (description: string, onLog?: (msg: s
     let layout = mapToInternalLayout(cleanAndParseJSON(response.text));
     if (onLog) onLog(`Generated ${layout.elements.length} elements.`);
     return await ensureValidLayout(layout, ai, fixModel, onLog);
-  } catch (error) {
+  } catch (error: any) {
+    const msg = error.message || String(error);
     console.error("Gen failed", error);
+    if (onLog) {
+        onLog(`❌ Error: ${msg.slice(0, 150)}...`);
+        if (msg.includes("404") || msg.includes("not found")) {
+            onLog("💡 Tip: Check if your API Key has access to the selected model.");
+        }
+    }
     return fallbackLayout;
   }
 };
@@ -259,8 +299,10 @@ export const augmentLayoutWithRoads = async (currentLayout: ParkingLayout, onLog
     let layout = mapToInternalLayout(cleanAndParseJSON(response.text));
     layout = fillParkingAutomatically(layout);
     return await ensureValidLayout(layout, ai, fixModel, onLog);
-  } catch (error) {
+  } catch (error: any) {
+    const msg = error.message || String(error);
     console.error("Augment failed", error);
+    if (onLog) onLog(`❌ Refine Error: ${msg.slice(0, 150)}`);
     return currentLayout;
   }
 };
